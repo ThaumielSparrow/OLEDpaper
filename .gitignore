@@ -1,0 +1,8 @@
+venv/
+testing/
+__pycache__/
+
+*.png
+*.jpg
+*.jpeg
+*.tiff
