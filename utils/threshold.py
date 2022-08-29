@@ -1,13 +1,24 @@
 from copy import deepcopy
-import cv2 as cv
+import numpy as np
 from PIL import Image
-from exceptions import DimensionError
+from cv_PIL_conv import cv_to_PIL
+from exceptions.exceptions import DimensionError
 
 def threshold_blacks(image, drop_thresh, save_hard_copy=False, output_filename=None):
     if len(drop_thresh) != 3:
         raise DimensionError("Threshold value passed not of (R,G,B) format")
 
-    orig_img = Image.open(image)
+    if type(image) == str:
+        orig_img = Image.open(image)
+    else:
+        try:
+            if isinstance(image, np.ndarray):
+                orig_img = cv_to_PIL(image)
+            else:
+                orig_img = image
+        except:
+            raise TypeError("Argument was not a valid filepath or image object")
+
     img = deepcopy(orig_img)
     img = img.convert("RGB")
     d = img.getdata()

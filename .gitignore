@@ -1,5 +1,6 @@
 venv/
 testing/
+imgs/
 __pycache__/
 
 *.png
