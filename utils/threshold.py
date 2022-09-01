@@ -4,7 +4,23 @@ from PIL import Image
 from cv_PIL_conv import cv_to_PIL
 from exceptions.exceptions import DimensionError
 
-def threshold_blacks(image, drop_thresh, save_hard_copy=False, output_filename=None):
+def threshold_blacks(image:Image.Image, drop_thresh:tuple=(10,10,10), save_hard_copy=False, output_filename=None) -> Image.Image:
+    """
+    Shallow scale function designed to convert color ranges to true blacks. Takes only PIL image formats.
+
+    Parameters
+    ----------
+    `image` -> PIL.Image.Image: one of the supported PIL image formats. If using this function outside its
+        wrapper, Use functions found in `loader` to convert to proper input.
+    
+    `drop_thresh` -> Iterable [tuple, list]: (R,G,B) values that represent the threshold to set as true black.
+        Defaults to (10,10,10).
+
+    Returns
+    ----------
+    `img` -> PIL.Image.Image: modified image object with set true black threshold.
+    
+    """
     if len(drop_thresh) != 3:
         raise DimensionError("Threshold value passed not of (R,G,B) format")
 
@@ -26,7 +42,7 @@ def threshold_blacks(image, drop_thresh, save_hard_copy=False, output_filename=N
     new_img = []
 
     for i in d:
-        if all(a < b for a, b in zip(i, drop_thresh)):
+        if all(a <= b for a, b in zip(i, drop_thresh)):
             new_img.append((0, 0, 0))
         else:
             new_img.append(i)
@@ -37,7 +53,7 @@ def threshold_blacks(image, drop_thresh, save_hard_copy=False, output_filename=N
         if output_filename:
             img.save(output_filename)
         else:
-            img.save('output.png')
+            img.save("output.png")
     
     return img
 
