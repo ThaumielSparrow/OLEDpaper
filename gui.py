@@ -1,6 +1,6 @@
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QPixmap
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QWidget, QHBoxLayout, QVBoxLayout
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QGraphicsScene, QGraphicsPixmapItem
 import sys
 
 class MainWindow(QMainWindow):
@@ -26,6 +26,7 @@ class MainWindow(QMainWindow):
         self.mainCanvas.setMinimumWidth(320)
         self.mainCanvas.setMinimumHeight(480)
         self.mainCanvas.setStyleSheet('* {background: gray;}')
+        self.label_image = QLabel(self.mainCanvas)
 
         self.vLayout.addWidget(self.mainCanvas)
         self.vLayout.addWidget(self.buttonsWidget)
@@ -40,7 +41,10 @@ class MainWindow(QMainWindow):
         fileName, _ = QFileDialog.getOpenFileName(self,"Select Image", "","All Files (*);;PNG Image (*.png);;JPG Image (*.jpg)", options=options)
         if fileName:
             self.current_file = fileName
+            scene = QGraphicsScene(self)
             pixmap = QPixmap(fileName)
+            item = QGraphicsPixmapItem(pixmap)
+            self.label_image.setPixmap(pixmap)
 
 app = QApplication(sys.argv)
 window = MainWindow()
