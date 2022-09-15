@@ -56,7 +56,3 @@ def threshold_blacks(image:Image.Image, drop_thresh:tuple=(10,10,10), save_hard_
             img.save("output.png")
     
     return img
-
-
-if __name__ == "__main__":
-    threshold_blacks('flower.jpg', drop_thresh=(200,200,200), save_hard_copy=True, output_filename='output1.png')
