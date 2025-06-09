@@ -4,7 +4,7 @@ from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QFileDialog, 
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QSlider)
 import sys
-import qimage2ndarray as QIA
+# import qimage2ndarray as QIA
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
 
         self.slider_r, self.slider_g, self.slider_b = [QSlider(self)]*3
         for i in [self.slider_r, self.slider_g, self.slider_b]:
-            i.setOrientation(QtCore.Qt.Horizontal)
+            # i.setOrientation(QtCore.Qt.Horizontal)
             i.setMinimum(0)
             i.setMaximum(255)
             i.sliderMoved.connect(self._slider_moved)
