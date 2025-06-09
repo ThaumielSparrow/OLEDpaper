@@ -1,7 +1,6 @@
 from PIL import Image
 import cv2 as cv
 import numpy as np
-from exceptions.exceptions import ImportError
 from cv_PIL_conv import *
 
 def load(image, as_type:str="PIL"):
