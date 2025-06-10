@@ -8,3 +8,5 @@ qimage2ndarray/
 *.jpg
 *.jpeg
 *.tiff
+
+*.prof
