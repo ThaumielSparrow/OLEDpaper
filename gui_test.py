@@ -3,7 +3,7 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, 
                             QHBoxLayout, QWidget, QPushButton, QLabel, 
                             QSlider, QLineEdit, QFileDialog, QMessageBox)
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap, QImage, QIntValidator
 import os
 
@@ -13,6 +13,18 @@ class ImageViewerApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.initUI()
+        self.setup_debounce_timer()
+        
+    def setup_debounce_timer(self):
+        """Setup the debounce timer for slider updates"""
+        self.debounce_timer = QTimer()
+        self.debounce_timer.setSingleShot(True)  # Only fire once after timeout
+        self.debounce_timer.timeout.connect(self.process_and_display_image)
+        
+        # Dynamic debounce delays based on slider value
+        self.fast_debounce_delay = 5
+        self.slow_debounce_delay = 25
+        self.threshold_value = 30
         
     def initUI(self):
         # Set window properties
@@ -229,6 +241,13 @@ class ImageViewerApp(QMainWindow):
         # Convert to QImage and display
         self.display_scaled_image()
     
+    def get_debounce_delay(self, slider_value):
+        """Get the appropriate debounce delay based on slider value"""
+        if slider_value <= self.threshold_value:
+            return self.fast_debounce_delay
+        else:
+            return self.slow_debounce_delay
+    
     def display_scaled_image(self):
         """Display the processed image scaled to fit the label while maintaining aspect ratio"""
         if self.processed_array is not None:
@@ -251,11 +270,16 @@ class ImageViewerApp(QMainWindow):
             self.image_label.setPixmap(scaled_pixmap)
     
     def slider_changed(self):
-        """Handle slider value change - process and display image"""
+        """Handle slider value change - adaptive debounced processing"""
         value = self.slider.value()
         self.value_input.setText(str(value))
-        # Process and display image with new value
-        self.process_and_display_image()
+        
+        # Get appropriate delay based on current slider value
+        delay = self.get_debounce_delay(value)
+        
+        # Stop any existing timer and start a new one with adaptive delay
+        self.debounce_timer.stop()
+        self.debounce_timer.start(delay)
     
     def input_changed(self):
         """Handle input box text change (real-time)"""
@@ -267,8 +291,11 @@ class ImageViewerApp(QMainWindow):
                 self.slider.blockSignals(True)
                 self.slider.setValue(value)
                 self.slider.blockSignals(False)
-                # Process and display image with new value
-                self.process_and_display_image()
+                
+                # Use adaptive debounced processing for input changes too
+                delay = self.get_debounce_delay(value)
+                self.debounce_timer.stop()
+                self.debounce_timer.start(delay)
     
     def input_finished(self):
         """Handle when user presses Enter in input box"""
@@ -283,6 +310,10 @@ class ImageViewerApp(QMainWindow):
                 value = max(1, min(255, value))
                 self.value_input.setText(str(value))
                 self.slider.setValue(value)
+        
+        # Process immediately when user presses Enter (no debouncing)
+        self.debounce_timer.stop()
+        self.process_and_display_image()
     
     def resizeEvent(self, event):
         """Handle window resize to rescale image"""
