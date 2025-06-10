@@ -1,4 +1,5 @@
 import sys
+import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, 
                             QHBoxLayout, QWidget, QPushButton, QLabel, 
                             QSlider, QLineEdit, QFileDialog, QMessageBox)
@@ -6,7 +7,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QImage, QIntValidator
 import os
 
-from utils.threshold_qimage import threshold
+from utils.threshold_qimage import threshold_qimage
 
 class ImageViewerApp(QMainWindow):
     def __init__(self):
@@ -15,7 +16,7 @@ class ImageViewerApp(QMainWindow):
         
     def initUI(self):
         # Set window properties
-        self.setWindowTitle('OLEDpaper')
+        self.setWindowTitle('Image Viewer with Slider')
         self.setGeometry(100, 100, 800, 600)
         
         # Create central widget and main layout
@@ -84,11 +85,11 @@ class ImageViewerApp(QMainWindow):
         controls_layout.addLayout(slider_layout)
         main_layout.addLayout(controls_layout)
         
-        # Store the original image data
-        self.original_image = None
-        self.processed_image = None
+        # Store the original image data as numpy arrays
+        self.original_array = None
+        self.processed_array = None
+        self.has_alpha = False
         
-
     def load_image(self):
         """Open file dialog to load an image"""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -100,34 +101,37 @@ class ImageViewerApp(QMainWindow):
         
         if file_path:
             try:
-                # Load the image as QImage for fast pixel operations
+                # Load the image as QImage first for format detection
                 loaded_image = QImage(file_path)
                 if loaded_image.isNull():
                     QMessageBox.warning(self, 'Error', 'Failed to load the image.')
                     return
                 
-                # Convert to optimal format for fast pixel access
-                # Use ARGB32 if image has alpha channel, otherwise RGB32
-                if loaded_image.hasAlphaChannel():
-                    self.original_image = loaded_image.convertToFormat(QImage.Format_ARGB32)
-                    print(f"Converted image to Format_ARGB32 (original format: {loaded_image.format()})")
+                # Convert to optimal format for conversion to numpy
+                self.has_alpha = loaded_image.hasAlphaChannel()
+                if self.has_alpha:
+                    qimage = loaded_image.convertToFormat(QImage.Format_RGBA8888)
+                    print(f"Converted image to Format_RGBA8888 (original format: {loaded_image.format()})")
                 else:
-                    self.original_image = loaded_image.convertToFormat(QImage.Format_RGB32)
-                    print(f"Converted image to Format_RGB32 (original format: {loaded_image.format()})")
+                    qimage = loaded_image.convertToFormat(QImage.Format_RGB888)
+                    print(f"Converted image to Format_RGB888 (original format: {loaded_image.format()})")
                 
-                # Enable save button
+                # Convert QImage to numpy array
+                self.original_array = self.qimage_to_numpy(qimage)
+                print(f"Numpy array shape: {self.original_array.shape}, dtype: {self.original_array.dtype}")
+                
+                # Enable save button now that we have an image
                 self.save_button.setEnabled(True)
-
+                
                 # Process and display the image with current slider value
                 self.process_and_display_image()
                 
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'An error occurred while loading the image:\n{str(e)}')
-
-
+    
     def save_image(self):
         """Save the currently processed image"""
-        if not self.processed_image:
+        if self.processed_array is None:
             QMessageBox.warning(self, 'Warning', 'No processed image to save.')
             return
         
@@ -141,6 +145,9 @@ class ImageViewerApp(QMainWindow):
         
         if file_path:
             try:
+                # Convert numpy array to QImage for saving
+                qimage = self.numpy_to_qimage(self.processed_array)
+                
                 # Determine format from selected filter or file extension
                 if selected_filter.startswith('PNG'):
                     format_str = 'PNG'
@@ -167,8 +174,8 @@ class ImageViewerApp(QMainWindow):
                     if not ext:
                         file_path += '.png'
                 
-                # Save the processed image
-                success = self.processed_image.save(file_path, format_str)
+                # Save the QImage
+                success = qimage.save(file_path, format_str)
                 
                 if success:
                     QMessageBox.information(self, 'Success', f'Image saved successfully to:\n{file_path}')
@@ -177,31 +184,59 @@ class ImageViewerApp(QMainWindow):
                     
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'An error occurred while saving the image:\n{str(e)}')
-
-
+    
+    def qimage_to_numpy(self, qimage):
+        """Convert QImage to numpy array"""
+        width = qimage.width()
+        height = qimage.height()
+        
+        # Get the image data as bytes
+        ptr = qimage.bits()
+        ptr.setsize(qimage.byteCount())
+        
+        if self.has_alpha:
+            # RGBA format: 4 channels
+            arr = np.array(ptr).reshape(height, width, 4)
+        else:
+            # RGB format: 3 channels
+            arr = np.array(ptr).reshape(height, width, 3)
+        
+        return arr.copy()
+    
+    def numpy_to_qimage(self, arr):
+        """Convert numpy array to QImage"""
+        height, width = arr.shape[:2]
+        
+        if arr.shape[2] == 4:  # RGBA
+            qimage = QImage(arr.data, width, height, QImage.Format_RGBA8888)
+        else:  # RGB
+            qimage = QImage(arr.data, width, height, QImage.Format_RGB888)
+        
+        return qimage.copy()
+    
     def process_and_display_image(self):
         """Process the image based on slider value and display it"""
-        if not self.original_image:
+        if self.original_array is None:
             return
             
         # Get current slider value
         slider_value = self.slider.value()
         
-        # TODO: Add your image processing logic here
-        # For now, we'll just copy the original image
-        # Example: self.processed_image = self.apply_brightness(self.original_image, slider_value)
-        threshold_image = threshold(self.original_image.copy(), slider_value)
-        self.processed_image = threshold_image
+        # Process array
+        thresh_arr = threshold_qimage(self.original_array, slider_value)
+        self.processed_array = thresh_arr
         
-        # Convert to pixmap and display
+        # Convert to QImage and display
         self.display_scaled_image()
-
     
     def display_scaled_image(self):
         """Display the processed image scaled to fit the label while maintaining aspect ratio"""
-        if self.processed_image:
+        if self.processed_array is not None:
+            # Convert numpy array to QImage
+            qimage = self.numpy_to_qimage(self.processed_array)
+            
             # Convert QImage to QPixmap
-            pixmap = QPixmap.fromImage(self.processed_image)
+            pixmap = QPixmap.fromImage(qimage)
             
             # Get the size of the label
             label_size = self.image_label.size()
@@ -252,7 +287,7 @@ class ImageViewerApp(QMainWindow):
     def resizeEvent(self, event):
         """Handle window resize to rescale image"""
         super().resizeEvent(event)
-        if self.processed_image:
+        if self.processed_array is not None:
             self.display_scaled_image()
 
 def main():
