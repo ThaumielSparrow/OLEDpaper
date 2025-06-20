@@ -3,7 +3,7 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, 
                             QHBoxLayout, QWidget, QPushButton, QLabel, 
                             QSlider, QLineEdit, QFileDialog, QMessageBox)
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap, QImage, QIntValidator
 import os
 
@@ -13,6 +13,11 @@ class ImageViewerApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.initUI()
+        
+        # Timer for delayed processing
+        self.process_timer = QTimer()
+        self.process_timer.timeout.connect(self.process_and_display_image)
+        self.process_timer.setSingleShot(True)
         
     def initUI(self):
         # Set window properties
@@ -63,10 +68,10 @@ class ImageViewerApp(QMainWindow):
         slider_label = QLabel('Threshold:')
         slider_layout.addWidget(slider_label)
         
-        # Slider (1 to 255)
+        # Slider
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setMinimum(1)
-        self.slider.setMaximum(30)
+        self.slider.setMaximum(100)
         self.slider.setValue(1)  # Default
         self.slider.valueChanged.connect(self.slider_changed)
         slider_layout.addWidget(self.slider)
@@ -75,8 +80,8 @@ class ImageViewerApp(QMainWindow):
         self.value_input = QLineEdit()
         self.value_input.setText('1')
         self.value_input.setMaximumWidth(60)
-        # Set validator to only allow integers between 1 and 30
-        validator = QIntValidator(1, 30)
+        # Set validator
+        validator = QIntValidator(1, 100)
         self.value_input.setValidator(validator)
         self.value_input.textChanged.connect(self.input_changed)
         self.value_input.returnPressed.connect(self.input_finished)
@@ -128,6 +133,8 @@ class ImageViewerApp(QMainWindow):
                 
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'An error occurred while loading the image:\n{str(e)}')
+                import traceback
+                traceback.print_exc()
     
     def save_image(self):
         """Save the currently processed image"""
@@ -223,8 +230,7 @@ class ImageViewerApp(QMainWindow):
         slider_value = self.slider.value()
         
         # Process array
-        thresh_arr = threshold_qimage(self.original_array, slider_value)
-        self.processed_array = thresh_arr
+        self.processed_array = threshold_qimage(self.original_array, slider_value)
         
         # Convert to QImage and display
         self.display_scaled_image()
@@ -254,21 +260,24 @@ class ImageViewerApp(QMainWindow):
         """Handle slider value change - process and display image"""
         value = self.slider.value()
         self.value_input.setText(str(value))
-        # Process and display image with new value
-        self.process_and_display_image()
+        
+        # Use timer for minimal debouncing (5ms)
+        self.process_timer.stop()
+        self.process_timer.start(5)
     
     def input_changed(self):
         """Handle input box text change (real-time)"""
         text = self.value_input.text()
         if text.isdigit():
             value = int(text)
-            if 1 <= value <= 255:
+            if 1 <= value <= 30:
                 # Update slider without triggering its signal
                 self.slider.blockSignals(True)
                 self.slider.setValue(value)
                 self.slider.blockSignals(False)
-                # Process and display image with new value
-                self.process_and_display_image()
+                # Process with minimal delay
+                self.process_timer.stop()
+                self.process_timer.start(5)
     
     def input_finished(self):
         """Handle when user presses Enter in input box"""
@@ -278,9 +287,9 @@ class ImageViewerApp(QMainWindow):
             self.value_input.setText(str(self.slider.value()))
         else:
             value = int(text)
-            if not (1 <= value <= 255):
+            if not (1 <= value <= 30):
                 # Clamp value to valid range
-                value = max(1, min(255, value))
+                value = max(1, min(30, value))
                 self.value_input.setText(str(value))
                 self.slider.setValue(value)
     

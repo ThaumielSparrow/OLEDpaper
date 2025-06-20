@@ -1,50 +1,62 @@
 import numpy as np
 
+try:
+    from numba import njit, prange
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
+
+if NUMBA_AVAILABLE:
+    @njit(parallel=True, cache=True)
+    def threshold_numba(image_array, threshold, result):
+        """Fast thresholding using numba JIT compilation."""
+        height, width = image_array.shape[:2]
+        channels = image_array.shape[2]
+        
+        for i in prange(height):
+            for j in prange(width):
+                if channels == 4:  # RGBA
+                    if (image_array[i, j, 0] < threshold or 
+                        image_array[i, j, 1] < threshold or 
+                        image_array[i, j, 2] < threshold):
+                        result[i, j, 0] = 0
+                        result[i, j, 1] = 0
+                        result[i, j, 2] = 0
+                        result[i, j, 3] = image_array[i, j, 3]
+                    else:
+                        for k in range(4):
+                            result[i, j, k] = image_array[i, j, k]
+                else:  # RGB
+                    if (image_array[i, j, 0] < threshold or 
+                        image_array[i, j, 1] < threshold or 
+                        image_array[i, j, 2] < threshold):
+                        result[i, j, 0] = 0
+                        result[i, j, 1] = 0
+                        result[i, j, 2] = 0
+                    else:
+                        for k in range(3):
+                            result[i, j, k] = image_array[i, j, k]
+
 def threshold_qimage(image_array, threshold):
     """
-    Creates a new numpy array where all RGB values below the threshold are set to 0.
-    
-    Args:
-        image_array (np.ndarray): Input image array from qimage_to_numpy()
-                                 Shape: (height, width, 3) for RGB or (height, width, 4) for RGBA
-        threshold (int): Threshold value (1-255). Pixels with R, G, or B below this become black.
-    
-    Returns:
-        np.ndarray: New array with thresholding applied, same shape as input
+    Optimized thresholding function.
+    Uses numba if available, otherwise falls back to numpy.
     """
-    # Create a copy to avoid modifying the original
-    result = image_array.copy()
-    
-    # Handle both RGB and RGBA formats
-    if image_array.shape[2] == 4:  # RGBA format
-        # Note: Qt typically stores as BGRA in memory, so channels are [B, G, R, A]
-        b_channel = result[:, :, 0]
-        g_channel = result[:, :, 1] 
-        r_channel = result[:, :, 2]
-        # Alpha channel at index 3 is preserved
-        
-        # Create mask where any RGB channel is below threshold
-        mask = (r_channel < threshold) | (g_channel < threshold) | (b_channel < threshold)
-        
-        # Set RGB channels to 0 where mask is True (preserve alpha)
-        result[mask, 0] = 0  # Blue
-        result[mask, 1] = 0  # Green  
-        result[mask, 2] = 0  # Red
-        # Alpha channel (index 3) remains unchanged
-        
-    elif image_array.shape[2] == 3:  # RGB format
-        # For RGB888, channels are typically [R, G, B]
-        r_channel = result[:, :, 0]
-        g_channel = result[:, :, 1]
-        b_channel = result[:, :, 2]
-        
-        # Create mask where any RGB channel is below threshold
-        mask = (r_channel < threshold) | (g_channel < threshold) | (b_channel < threshold)
-        
-        # Set all RGB channels to 0 where mask is True
-        result[mask] = 0
-    
+    if NUMBA_AVAILABLE:
+        result = np.empty_like(image_array)
+        threshold_numba(image_array, threshold, result)
+        return result
     else:
-        raise ValueError(f"Unsupported array shape: {image_array.shape}. Expected (height, width, 3) or (height, width, 4)")
-    
-    return result
+        # Numpy vectorized version
+        result = image_array.copy()
+        
+        if image_array.shape[2] == 4:  # RGBA format
+            mask = np.any(result[:, :, :3] < threshold, axis=2)
+            result[mask, :3] = 0
+        elif image_array.shape[2] == 3:  # RGB format
+            mask = np.any(result < threshold, axis=2)
+            result[mask] = 0
+        else:
+            raise ValueError(f"Unsupported array shape: {image_array.shape}")
+        
+        return result
