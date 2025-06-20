@@ -9,6 +9,8 @@ import os
 
 from utils.threshold_qimage import threshold_qimage
 
+THRESHOLD_MAX = 100
+
 class ImageViewerApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -71,7 +73,7 @@ class ImageViewerApp(QMainWindow):
         # Slider
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setMinimum(1)
-        self.slider.setMaximum(100)
+        self.slider.setMaximum(THRESHOLD_MAX)
         self.slider.setValue(1)  # Default
         self.slider.valueChanged.connect(self.slider_changed)
         slider_layout.addWidget(self.slider)
@@ -81,7 +83,7 @@ class ImageViewerApp(QMainWindow):
         self.value_input.setText('1')
         self.value_input.setMaximumWidth(60)
         # Set validator
-        validator = QIntValidator(1, 100)
+        validator = QIntValidator(1, THRESHOLD_MAX)
         self.value_input.setValidator(validator)
         self.value_input.textChanged.connect(self.input_changed)
         self.value_input.returnPressed.connect(self.input_finished)
@@ -270,7 +272,7 @@ class ImageViewerApp(QMainWindow):
         text = self.value_input.text()
         if text.isdigit():
             value = int(text)
-            if 1 <= value <= 30:
+            if 1 <= value <= THRESHOLD_MAX:
                 # Update slider without triggering its signal
                 self.slider.blockSignals(True)
                 self.slider.setValue(value)
@@ -287,9 +289,9 @@ class ImageViewerApp(QMainWindow):
             self.value_input.setText(str(self.slider.value()))
         else:
             value = int(text)
-            if not (1 <= value <= 30):
+            if not (1 <= value <= THRESHOLD_MAX):
                 # Clamp value to valid range
-                value = max(1, min(30, value))
+                value = max(1, min(THRESHOLD_MAX, value))
                 self.value_input.setText(str(value))
                 self.slider.setValue(value)
     
