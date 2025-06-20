@@ -3,27 +3,92 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, 
                             QHBoxLayout, QWidget, QPushButton, QLabel, 
                             QSlider, QLineEdit, QFileDialog, QMessageBox)
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMutex, QMutexLocker
 from PyQt5.QtGui import QPixmap, QImage, QIntValidator
 import os
+from queue import Queue
+import time
 
 from utils.threshold_qimage import threshold_qimage
 
-THRESHOLD_MAX = 100
+THRESHOLD_MAX = 255
+
+class ImageProcessor(QThread):
+    """Background thread for image processing"""
+    imageProcessed = pyqtSignal(object)  # Will emit the processed numpy array
+    
+    def __init__(self):
+        super().__init__()
+        self.queue = Queue()
+        self.running = True
+        self.original_array = None
+        self.working_array = None
+        self.mutex = QMutex()
+        
+    def set_image(self, image_array):
+        """Set the original image to process"""
+        with QMutexLocker(self.mutex):
+            self.original_array = image_array.copy()
+            # Pre-allocate working array for in-place operations
+            self.working_array = np.empty_like(self.original_array)
+        
+    def add_threshold_value(self, value):
+        """Add a threshold value to process, clearing any pending values"""
+        # Clear the queue of any pending values
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except:
+                pass
+        # Add the new value
+        self.queue.put(value)
+        
+    def run(self):
+        """Main processing loop"""
+        while self.running:
+            try:
+                # Wait for a threshold value (with timeout to check running status)
+                threshold = self.queue.get(timeout=0.05)
+                
+                with QMutexLocker(self.mutex):
+                    if self.original_array is not None:
+                        # Process the image
+                        # start_time = time.time()
+                        processed = threshold_qimage(self.original_array, threshold)
+                        # processing_time = (time.time() - start_time) * 1000
+                        # print(f"Processing took {processing_time:.2f}ms for threshold={threshold}")
+                        
+                        # Emit the processed array
+                        self.imageProcessed.emit(processed)
+                        
+            except:
+                # Timeout - just continue to check if still running
+                continue
+                
+    def stop(self):
+        """Stop the processing thread"""
+        self.running = False
+        self.wait()
 
 class ImageViewerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.initUI()
         
-        # Timer for delayed processing
-        self.process_timer = QTimer()
-        self.process_timer.timeout.connect(self.process_and_display_image)
-        self.process_timer.setSingleShot(True)
+        # Create and start the processing thread
+        self.processor = ImageProcessor()
+        self.processor.imageProcessed.connect(self.on_image_processed)
+        self.processor.start()
+        
+        # Cache for QImage and QPixmap conversions
+        self.qimage_cache = {}
+        self.pixmap_cache = {}
+        self.last_label_size = None
+        
+        self.initUI()
         
     def initUI(self):
         # Set window properties
-        self.setWindowTitle('Image Viewer with Slider')
+        self.setWindowTitle('OLEDpaper')
         self.setGeometry(100, 100, 800, 600)
         
         # Create central widget and main layout
@@ -31,7 +96,7 @@ class ImageViewerApp(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         
-        # Create and setup the image display label (canvas)
+        # Create and setup the image display label
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet("border: 2px solid gray; background-color: white;")
@@ -55,18 +120,15 @@ class ImageViewerApp(QMainWindow):
         self.save_button = QPushButton('Save Image')
         self.save_button.clicked.connect(self.save_image)
         self.save_button.setMaximumWidth(150)
-        self.save_button.setEnabled(False)  # Disabled until image is loaded
+        self.save_button.setEnabled(False)
         buttons_layout.addWidget(self.save_button)
         
-        # Add stretch to push buttons to the left
         buttons_layout.addStretch()
-        
         controls_layout.addLayout(buttons_layout)
         
         # Slider and input controls
         slider_layout = QHBoxLayout()
         
-        # Slider label
         slider_label = QLabel('Threshold:')
         slider_layout.addWidget(slider_label)
         
@@ -74,7 +136,7 @@ class ImageViewerApp(QMainWindow):
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setMinimum(1)
         self.slider.setMaximum(THRESHOLD_MAX)
-        self.slider.setValue(1)  # Default
+        self.slider.setValue(1)
         self.slider.valueChanged.connect(self.slider_changed)
         slider_layout.addWidget(self.slider)
         
@@ -82,7 +144,6 @@ class ImageViewerApp(QMainWindow):
         self.value_input = QLineEdit()
         self.value_input.setText('1')
         self.value_input.setMaximumWidth(60)
-        # Set validator
         validator = QIntValidator(1, THRESHOLD_MAX)
         self.value_input.setValidator(validator)
         self.value_input.textChanged.connect(self.input_changed)
@@ -92,10 +153,11 @@ class ImageViewerApp(QMainWindow):
         controls_layout.addLayout(slider_layout)
         main_layout.addLayout(controls_layout)
         
-        # Store the original image data as numpy arrays
+        # Store the original image data
         self.original_array = None
         self.processed_array = None
         self.has_alpha = False
+        self.current_threshold = 1
         
     def load_image(self):
         """Open file dialog to load an image"""
@@ -108,35 +170,37 @@ class ImageViewerApp(QMainWindow):
         
         if file_path:
             try:
-                # Load the image as QImage first for format detection
+                # Load the image
                 loaded_image = QImage(file_path)
                 if loaded_image.isNull():
                     QMessageBox.warning(self, 'Error', 'Failed to load the image.')
                     return
                 
-                # Convert to optimal format for conversion to numpy
+                # Convert to optimal format
                 self.has_alpha = loaded_image.hasAlphaChannel()
                 if self.has_alpha:
                     qimage = loaded_image.convertToFormat(QImage.Format_RGBA8888)
-                    print(f"Converted image to Format_RGBA8888 (original format: {loaded_image.format()})")
                 else:
                     qimage = loaded_image.convertToFormat(QImage.Format_RGB888)
-                    print(f"Converted image to Format_RGB888 (original format: {loaded_image.format()})")
                 
-                # Convert QImage to numpy array
+                # Convert to numpy array
                 self.original_array = self.qimage_to_numpy(qimage)
-                print(f"Numpy array shape: {self.original_array.shape}, dtype: {self.original_array.dtype}")
                 
-                # Enable save button now that we have an image
+                # Clear caches when loading new image
+                self.qimage_cache.clear()
+                self.pixmap_cache.clear()
+                
+                # Set the image in the processor
+                self.processor.set_image(self.original_array)
+                
+                # Enable save button
                 self.save_button.setEnabled(True)
                 
-                # Process and display the image with current slider value
-                self.process_and_display_image()
+                # Process with current threshold
+                self.processor.add_threshold_value(self.slider.value())
                 
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'An error occurred while loading the image:\n{str(e)}')
-                import traceback
-                traceback.print_exc()
     
     def save_image(self):
         """Save the currently processed image"""
@@ -144,7 +208,6 @@ class ImageViewerApp(QMainWindow):
             QMessageBox.warning(self, 'Warning', 'No processed image to save.')
             return
         
-        # Open save dialog
         file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
             'Save Image',
@@ -154,10 +217,10 @@ class ImageViewerApp(QMainWindow):
         
         if file_path:
             try:
-                # Convert numpy array to QImage for saving
+                # Convert numpy array to QImage
                 qimage = self.numpy_to_qimage(self.processed_array)
                 
-                # Determine format from selected filter or file extension
+                # Determine format
                 if selected_filter.startswith('PNG'):
                     format_str = 'PNG'
                 elif selected_filter.startswith('JPEG'):
@@ -167,7 +230,6 @@ class ImageViewerApp(QMainWindow):
                 elif selected_filter.startswith('TIFF'):
                     format_str = 'TIFF'
                 else:
-                    # Try to determine from file extension
                     ext = os.path.splitext(file_path)[1].lower()
                     format_map = {
                         '.png': 'PNG',
@@ -177,13 +239,11 @@ class ImageViewerApp(QMainWindow):
                         '.tiff': 'TIFF',
                         '.tif': 'TIFF'
                     }
-                    format_str = format_map.get(ext, 'PNG')  # Default to PNG
-                    
-                    # Add extension if not present
+                    format_str = format_map.get(ext, 'PNG')
                     if not ext:
                         file_path += '.png'
                 
-                # Save the QImage
+                # Save the image
                 success = qimage.save(file_path, format_str)
                 
                 if success:
@@ -199,21 +259,25 @@ class ImageViewerApp(QMainWindow):
         width = qimage.width()
         height = qimage.height()
         
-        # Get the image data as bytes
         ptr = qimage.bits()
         ptr.setsize(qimage.byteCount())
         
         if self.has_alpha:
-            # RGBA format: 4 channels
             arr = np.array(ptr).reshape(height, width, 4)
         else:
-            # RGB format: 3 channels
             arr = np.array(ptr).reshape(height, width, 3)
         
         return arr.copy()
     
     def numpy_to_qimage(self, arr):
-        """Convert numpy array to QImage"""
+        """Convert numpy array to QImage with caching"""
+        # Create a hash key for the array
+        arr_key = hash(arr.tobytes())
+        
+        # Check cache
+        if arr_key in self.qimage_cache:
+            return self.qimage_cache[arr_key]
+        
         height, width = arr.shape[:2]
         
         if arr.shape[2] == 4:  # RGBA
@@ -221,85 +285,104 @@ class ImageViewerApp(QMainWindow):
         else:  # RGB
             qimage = QImage(arr.data, width, height, QImage.Format_RGB888)
         
-        return qimage.copy()
+        qimage = qimage.copy()
+        
+        # Cache the result (limit cache size)
+        if len(self.qimage_cache) > 10:
+            self.qimage_cache.clear()
+        self.qimage_cache[arr_key] = qimage
+        
+        return qimage
     
-    def process_and_display_image(self):
-        """Process the image based on slider value and display it"""
-        if self.original_array is None:
-            return
-            
-        # Get current slider value
-        slider_value = self.slider.value()
-        
-        # Process array
-        self.processed_array = threshold_qimage(self.original_array, slider_value)
-        
-        # Convert to QImage and display
+    def on_image_processed(self, processed_array):
+        """Handle processed image from the worker thread"""
+        self.processed_array = processed_array
         self.display_scaled_image()
     
     def display_scaled_image(self):
-        """Display the processed image scaled to fit the label while maintaining aspect ratio"""
+        """Display the processed image scaled to fit the label"""
         if self.processed_array is not None:
-            # Convert numpy array to QImage
-            qimage = self.numpy_to_qimage(self.processed_array)
-            
-            # Convert QImage to QPixmap
-            pixmap = QPixmap.fromImage(qimage)
-            
-            # Get the size of the label
+            # Get the current label size
             label_size = self.image_label.size()
             
-            # Scale the pixmap to fit the label while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaled(
-                label_size, 
-                Qt.AspectRatioMode.KeepAspectRatio, 
-                Qt.TransformationMode.SmoothTransformation
-            )
+            # Check if we need to rescale (size changed or no cached pixmap)
+            size_key = (label_size.width(), label_size.height(), self.current_threshold)
+            
+            if size_key not in self.pixmap_cache:
+                # Convert to QImage
+                qimage = self.numpy_to_qimage(self.processed_array)
+                
+                # Convert to QPixmap
+                pixmap = QPixmap.fromImage(qimage)
+                
+                # Scale the pixmap
+                scaled_pixmap = pixmap.scaled(
+                    label_size, 
+                    Qt.AspectRatioMode.KeepAspectRatio, 
+                    Qt.TransformationMode.FastTransformation  # Use fast transformation for responsiveness
+                )
+                
+                # Cache the scaled pixmap (limit cache size)
+                if len(self.pixmap_cache) > 10:
+                    self.pixmap_cache.clear()
+                self.pixmap_cache[size_key] = scaled_pixmap
+            else:
+                scaled_pixmap = self.pixmap_cache[size_key]
             
             self.image_label.setPixmap(scaled_pixmap)
     
     def slider_changed(self):
-        """Handle slider value change - process and display image"""
+        """Handle slider value change"""
         value = self.slider.value()
+        self.current_threshold = value
         self.value_input.setText(str(value))
         
-        # Use timer for minimal debouncing (5ms)
-        self.process_timer.stop()
-        self.process_timer.start(5)
+        # Clear pixmap cache as threshold changed
+        self.pixmap_cache.clear()
+        
+        # Send new threshold to processor
+        if self.original_array is not None:
+            self.processor.add_threshold_value(value)
     
     def input_changed(self):
-        """Handle input box text change (real-time)"""
+        """Handle input box text change"""
         text = self.value_input.text()
         if text.isdigit():
             value = int(text)
             if 1 <= value <= THRESHOLD_MAX:
+                self.current_threshold = value
                 # Update slider without triggering its signal
                 self.slider.blockSignals(True)
                 self.slider.setValue(value)
                 self.slider.blockSignals(False)
-                # Process with minimal delay
-                self.process_timer.stop()
-                self.process_timer.start(5)
+                
+                # Clear pixmap cache and process
+                self.pixmap_cache.clear()
+                if self.original_array is not None:
+                    self.processor.add_threshold_value(value)
     
     def input_finished(self):
         """Handle when user presses Enter in input box"""
         text = self.value_input.text()
         if not text.isdigit():
-            # Reset to slider value if invalid
             self.value_input.setText(str(self.slider.value()))
         else:
             value = int(text)
             if not (1 <= value <= THRESHOLD_MAX):
-                # Clamp value to valid range
                 value = max(1, min(THRESHOLD_MAX, value))
                 self.value_input.setText(str(value))
                 self.slider.setValue(value)
     
     def resizeEvent(self, event):
-        """Handle window resize to rescale image"""
+        """Handle window resize"""
         super().resizeEvent(event)
         if self.processed_array is not None:
             self.display_scaled_image()
+    
+    def closeEvent(self, event):
+        """Clean up when closing the application"""
+        self.processor.stop()
+        event.accept()
 
 def main():
     app = QApplication(sys.argv)
