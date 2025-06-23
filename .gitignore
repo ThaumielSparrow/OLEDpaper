@@ -10,3 +10,5 @@ qimage2ndarray/
 *.tiff
 
 *.prof
+
+testfl*
